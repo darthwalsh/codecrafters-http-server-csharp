@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 
 Request parse(Stream stream)
 {
@@ -36,7 +37,8 @@ Request parse(Stream stream)
 
 void Handle(Stream stream, Response response)
 {
-  StreamWriter writer = new(stream) {
+  StreamWriter writer = new(stream)
+  {
     NewLine = "\r\n",
   };
   writer.WriteLine($"{response.Protocol} {response.StatusCode} {response.StatusMessage}");
@@ -49,6 +51,18 @@ void Handle(Stream stream, Response response)
   writer.Flush();
 }
 
+Response Ok(string body)
+{
+  var headers = new Dictionary<string, string> { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
+  return new Response("HTTP/1.1", 200, "OK", headers, body);
+}
+
+List<(string, Func<Request, Response>)> routes =
+[
+  ("/", (request) => Ok("Hello, World!")),
+  ("/echo/.*", (request) => Ok(request.Path[6..])),
+];
+
 using TcpListener server = new(IPAddress.Any, 4221);
 server.Start();
 using Socket client = server.AcceptSocket();
@@ -58,16 +72,27 @@ using NetworkStream stream = new(client);
 var request = parse(stream);
 Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
 
-var response = new Response(
-    request.Protocol,
-    request.Path == "/" ? 200 : 404,
-    request.Path == "/" ? "OK" : "Not Found",
-    new Dictionary<string, string> { { "Content-Type", "text/plain" } },
-    "Hello, World!"
-);
-Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
+foreach (var (pattern, func) in routes)
+{
+  if (!Regex.IsMatch(request.Path, $"^{pattern}$"))
+  {
+    Console.WriteLine($"Path {request.Path} does not match {pattern}");
+    continue;
+  }
 
-Handle(stream, response);
+  var response = func(request);
+  Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
+  Handle(stream, response);
+  return;
+}
+var notFound = new Response(
+  request.Protocol,
+  404,
+  "Not Found",
+  new Dictionary<string, string> { { "Content-Type", "text/plain" } },
+  "Not Found"
+);
+Handle(stream, notFound);
 
 record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, string Body);
 record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, string Body);
