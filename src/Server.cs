@@ -42,7 +42,7 @@ void Handle(Stream stream, Response response)
     NewLine = "\r\n",
   };
   writer.WriteLine($"{response.Protocol} {response.StatusCode} {response.StatusMessage}");
-  foreach (var header in response.Headers)
+  foreach (KeyValuePair<string, string> header in response.Headers)
   {
     writer.WriteLine($"{header.Key}: {header.Value}");
   }
@@ -53,7 +53,7 @@ void Handle(Stream stream, Response response)
 
 Response Ok(string body)
 {
-  var headers = new Dictionary<string, string> { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
+  Dictionary<string, string> headers = new() { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
   return new Response("HTTP/1.1", 200, "OK", headers, body);
 }
 
@@ -64,36 +64,44 @@ List<(string, Func<Request, Response>)> routes =
   ("/user-agent", (request) => Ok(request.Headers["User-Agent"])),
 ];
 
+async void HandleClient(Task<Socket> client) {
+  using Socket socket = await client;
+  using NetworkStream stream = new(socket);
+  Request request = parse(stream);
+  Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
+
+  foreach ((string pattern, Func<Request, Response> func) in routes)
+  {
+    if (!Regex.IsMatch(request.Path, $"^{pattern}$"))
+    {
+      Console.WriteLine($"Path {request.Path} does not match {pattern}");
+      continue;
+    }
+
+    Response response = func(request);
+    Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
+    Handle(stream, response);
+    return;
+  }
+  Response notFound = new(
+    request.Protocol,
+    404,
+    "Not Found",
+    new Dictionary<string, string> { { "Content-Type", "text/plain" } },
+    "Not Found"
+  );
+  Handle(stream, notFound);
+}
+
 using TcpListener server = new(IPAddress.Any, 4221);
 server.Start();
-using Socket client = server.AcceptSocket();
-Console.WriteLine("Client connected");
-
-using NetworkStream stream = new(client);
-var request = parse(stream);
-Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
-
-foreach (var (pattern, func) in routes)
+while (true)
 {
-  if (!Regex.IsMatch(request.Path, $"^{pattern}$"))
-  {
-    Console.WriteLine($"Path {request.Path} does not match {pattern}");
-    continue;
-  }
-
-  var response = func(request);
-  Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
-  Handle(stream, response);
-  return;
+  Console.WriteLine("Waiting for a connection...");
+  Task<Socket> client = server.AcceptSocketAsync();
+  Console.WriteLine("Client connected");
+  HandleClient(client);
 }
-var notFound = new Response(
-  request.Protocol,
-  404,
-  "Not Found",
-  new Dictionary<string, string> { { "Content-Type", "text/plain" } },
-  "Not Found"
-);
-Handle(stream, notFound);
 
 record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, string Body);
 record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, string Body);
