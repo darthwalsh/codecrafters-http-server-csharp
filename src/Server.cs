@@ -61,6 +61,7 @@ List<(string, Func<Request, Response>)> routes =
 [
   ("/", (request) => Ok("Hello, World!")),
   ("/echo/.*", (request) => Ok(request.Path[6..])),
+  ("/user-agent", (request) => Ok(request.Headers["User-Agent"])),
 ];
 
 using TcpListener server = new(IPAddress.Any, 4221);
