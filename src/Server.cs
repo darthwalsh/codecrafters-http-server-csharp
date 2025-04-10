@@ -2,31 +2,24 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
-async Task<Request> parse(Stream stream)
-{
+async Task<Request> parse(Stream stream) {
   StreamReader reader = new(stream); // DON'T DISPOSE
   string? requestLine = await reader.ReadLineAsync();
-  if (requestLine!.Split(' ') is not [string method, string path, string protocol])
-  {
+  if (requestLine!.Split(' ') is not [string method, string path, string protocol]) {
     throw new FormatException("Invalid request line format");
   }
 
   Dictionary<string, string> headers = new();
   string? line;
-  while ((line = await reader.ReadLineAsync()) != null && line != "")
-  {
-    if (line.Split(':', 2) is [string key, string value])
-    {
+  while ((line = await reader.ReadLineAsync()) != null && line != "") {
+    if (line.Split(':', 2) is [string key, string value]) {
       headers[key.Trim()] = value.Trim();
-    }
-    else
-    {
+    } else {
       throw new FormatException("Invalid header format");
     }
   }
 
-  if (method != "GET")
-  {
+  if (method != "GET") {
     throw new NotImplementedException("Only GET method is implemented");
   }
   // TODO understand how to not hang here string body = reader.ReadToEndAsync();
@@ -35,15 +28,12 @@ async Task<Request> parse(Stream stream)
   return new Request(method, path, protocol, headers, body);
 }
 
-async Task Handle(Stream stream, Response response)
-{
-  StreamWriter writer = new(stream)
-  {
+async Task Handle(Stream stream, Response response) {
+  StreamWriter writer = new(stream) {
     NewLine = "\r\n",
   };
   await writer.WriteLineAsync($"{response.Protocol} {response.StatusCode} {response.StatusMessage}");
-  foreach (KeyValuePair<string, string> header in response.Headers)
-  {
+  foreach (KeyValuePair<string, string> header in response.Headers) {
     await writer.WriteLineAsync($"{header.Key}: {header.Value}");
   }
   await writer.WriteLineAsync();
@@ -51,8 +41,7 @@ async Task Handle(Stream stream, Response response)
   await writer.FlushAsync();
 }
 
-Response Ok(string body)
-{
+Response Ok(string body) {
   Dictionary<string, string> headers = new() { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
   return new Response("HTTP/1.1", 200, "OK", headers, body);
 }
@@ -70,10 +59,8 @@ async Task HandleClient(Socket client) {
   Request request = await parse(stream);
   Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
 
-  foreach ((string pattern, Func<Request, Response> func) in routes)
-  {
-    if (!Regex.IsMatch(request.Path, $"^{pattern}$"))
-    {
+  foreach ((string pattern, Func<Request, Response> func) in routes) {
+    if (!Regex.IsMatch(request.Path, $"^{pattern}$")) {
       Console.WriteLine($"Path {request.Path} does not match {pattern}");
       continue;
     }
@@ -95,16 +82,13 @@ async Task HandleClient(Socket client) {
 
 using TcpListener server = new(IPAddress.Any, 4221);
 server.Start();
-while (true)
-{
+while (true) {
   Console.WriteLine("Waiting for a connection...");
   Socket client = server.AcceptSocket();
   Console.WriteLine("Client connected");
   Task result = HandleClient(client);
-  _ = result.ContinueWith((t) =>
-  {
-    if (t.IsFaulted)
-    {
+  _ = result.ContinueWith((t) => {
+    if (t.IsFaulted) {
       Console.Error.WriteLine("Error: " + t.Exception);
       return;
     }
