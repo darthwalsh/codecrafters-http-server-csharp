@@ -50,11 +50,11 @@ async Task Handle(Stream stream, Response response) {
 }
 
 Response Ok(string body) {
-  return OkBytes(Encoding.UTF8.GetBytes(body));
+  return OkBytes(Encoding.UTF8.GetBytes(body), "text/plain");
 }
 
-Response OkBytes(byte[] body) {
-  Dictionary<string, string> headers = new() { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
+Response OkBytes(byte[] body, string contentType) {
+  Dictionary<string, string> headers = new() { ["Content-Type"] = contentType, ["Content-Length"] = body.Length.ToString() };
   return new Response("HTTP/1.1", 200, "OK", headers, body);
 }
 
@@ -67,14 +67,16 @@ var notFound = new Response(
 );
 
 Response GetFile(string filename) {
-  if (filename.IndexOfAny(Path.GetInvalidPathChars()) != -1) {
+  int index = filename.IndexOfAny(Path.GetInvalidFileNameChars());
+  if (index != -1) {
+    Console.WriteLine($"Invalid filename: {filename} at {index}: {filename[index]}");
     return notFound;
   }
   string path = Path.Combine(directory, filename);
   if (!File.Exists(path)) {
     return notFound;
   }
-  return OkBytes(File.ReadAllBytes(path));
+  return OkBytes(File.ReadAllBytes(path), "application/octet-stream");
 }
 
 List<(string, Func<Request, Response>)> routes =
@@ -117,7 +119,7 @@ while (true) {
       Console.Error.WriteLine("Error: " + t.Exception);
       return;
     }
-    Console.WriteLine("Client disconnected");
+    Console.WriteLine("Client disconnected\n");
   });
 }
 
