@@ -1,7 +1,9 @@
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 if (args.Length != 2 || args[0] != "--directory") {
   Console.WriteLine("Usage: <app> --directory <directory>");
@@ -29,10 +31,8 @@ async Task<Request> parse(Stream stream) {
   if (method != "GET") {
     throw new NotImplementedException("Only GET method is implemented");
   }
-  // TODO understand how to not hang here string body = reader.ReadToEndAsync();
-  string body = "";
-
-  return new Request(method, path, protocol, headers, body);
+  // TODO(POST) understand how to not hang here string body = reader.ReadToEndAsync();
+  return new Request(method, path, protocol, headers, new byte[0]);
 }
 
 async Task Handle(Stream stream, Response response) {
@@ -49,8 +49,8 @@ async Task Handle(Stream stream, Response response) {
   await stream.FlushAsync();
 }
 
-Response Ok(string body) {
-  return OkBytes(Encoding.UTF8.GetBytes(body), "text/plain");
+Task<Response> Ok(string body) {
+  return Task.FromResult(OkBytes(Encoding.UTF8.GetBytes(body), "text/plain"));
 }
 
 Response OkBytes(byte[] body, string contentType) {
@@ -66,26 +66,51 @@ var notFound = new Response(
   Encoding.UTF8.GetBytes("Not Found")
 );
 
-Response GetFile(string filename) {
+bool IsValidFilename(string filename) {
   int index = filename.IndexOfAny(Path.GetInvalidFileNameChars());
-  if (index != -1) {
+  bool isValid = index == -1;
+  if (!isValid) {
     Console.WriteLine($"Invalid filename: {filename} at {index}: {filename[index]}");
-    return notFound;
   }
+  return isValid;
+}
+
+async Task<Response> GetFile(string filename) {
+  if (!IsValidFilename(filename)) return notFound;
+
   string path = Path.Combine(directory, filename);
   if (!File.Exists(path)) {
     return notFound;
   }
-  return OkBytes(File.ReadAllBytes(path), "application/octet-stream");
+  return OkBytes(await File.ReadAllBytesAsync(path), "application/octet-stream");
 }
 
-List<(string, Func<Request, Response>)> routes =
-[
-  ("/", (request) => Ok("Hello, World!")),
-  ("/echo/.*", (request) => Ok(request.Path[6..])),
-  ("/files/.*", (request) => GetFile(request.Path[7..])),
-  ("/user-agent", (request) => Ok(request.Headers["User-Agent"])),
-];
+async Task<Response> WriteFile(string filename, byte[] body) {
+  if (!IsValidFilename(filename)) return notFound;
+
+  string path = Path.Combine(directory, filename);
+  await File.WriteAllBytesAsync(path, body);
+  return new Response(
+    "HTTP/1.1",
+    201,
+    "Created",
+    new Dictionary<string, string> { { "Content-Type", "text/plain" } },
+    Encoding.UTF8.GetBytes("Created")
+  );
+}
+
+var routes = new Dictionary<string, List<(string, Func<Request, Task<Response>>)>> {
+  ["GET"] = [
+      ("/", (request) => Ok("Hello, World!")),
+      ("/echo/.*", (request) => Ok(request.Path[6..])),
+      ("/files/.*", (request) => GetFile(request.Path[7..])),
+      ("/user-agent", (request) => Ok(request.Headers["User-Agent"])),
+  ],
+  ["POST"] = [
+      ("/files.*", (request) => WriteFile(request.Path[7..], request.Body)),
+  ],
+};
+
 
 async Task HandleClient(Socket client) {
   using Socket socket = client;
@@ -93,13 +118,18 @@ async Task HandleClient(Socket client) {
   Request request = await parse(stream);
   Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
 
-  foreach ((string pattern, Func<Request, Response> func) in routes) {
+  if (!routes.TryGetValue(request.Method, out var methodRoutes)) {
+    await Handle(stream, notFound);
+    return;
+  }
+
+  foreach ((string pattern, var func) in methodRoutes) {
     if (!Regex.IsMatch(request.Path, $"^{pattern}$")) {
       Console.WriteLine($"Path {request.Path} does not match {pattern}");
       continue;
     }
 
-    Response response = func(request);
+    Response response = await func(request);
     Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
     await Handle(stream, response);
     return;
@@ -123,5 +153,5 @@ while (true) {
   });
 }
 
-record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, string Body);
+record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, byte[] Body);
 record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body);
