@@ -1,6 +1,13 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.RegularExpressions;
+
+if (args.Length != 2 || args[0] != "--directory") {
+  Console.WriteLine("Usage: <app> --directory <directory>");
+  return 1;
+}
+string directory = args[1];
 
 async Task<Request> parse(Stream stream) {
   StreamReader reader = new(stream); // DON'T DISPOSE
@@ -37,19 +44,44 @@ async Task Handle(Stream stream, Response response) {
     await writer.WriteLineAsync($"{header.Key}: {header.Value}");
   }
   await writer.WriteLineAsync();
-  await writer.WriteAsync(response.Body);
   await writer.FlushAsync();
+  await stream.WriteAsync(response.Body.AsMemory(0, response.Body.Length));
+  await stream.FlushAsync();
 }
 
 Response Ok(string body) {
+  return OkBytes(Encoding.UTF8.GetBytes(body));
+}
+
+Response OkBytes(byte[] body) {
   Dictionary<string, string> headers = new() { ["Content-Type"] = "text/plain", ["Content-Length"] = body.Length.ToString() };
   return new Response("HTTP/1.1", 200, "OK", headers, body);
+}
+
+var notFound = new Response(
+  "HTTP/1.1",
+  404,
+  "Not Found",
+  new Dictionary<string, string> { { "Content-Type", "text/plain" } },
+  Encoding.UTF8.GetBytes("Not Found")
+);
+
+Response GetFile(string filename) {
+  if (filename.IndexOfAny(Path.GetInvalidPathChars()) != -1) {
+    return notFound;
+  }
+  string path = Path.Combine(directory, filename);
+  if (!File.Exists(path)) {
+    return notFound;
+  }
+  return OkBytes(File.ReadAllBytes(path));
 }
 
 List<(string, Func<Request, Response>)> routes =
 [
   ("/", (request) => Ok("Hello, World!")),
   ("/echo/.*", (request) => Ok(request.Path[6..])),
+  ("/files/.*", (request) => GetFile(request.Path[7..])),
   ("/user-agent", (request) => Ok(request.Headers["User-Agent"])),
 ];
 
@@ -70,13 +102,6 @@ async Task HandleClient(Socket client) {
     await Handle(stream, response);
     return;
   }
-  Response notFound = new(
-    request.Protocol,
-    404,
-    "Not Found",
-    new Dictionary<string, string> { { "Content-Type", "text/plain" } },
-    "Not Found"
-  );
   await Handle(stream, notFound);
 }
 
@@ -97,4 +122,4 @@ while (true) {
 }
 
 record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, string Body);
-record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, string Body);
+record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body);
