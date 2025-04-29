@@ -23,11 +23,14 @@ string GetDirectory() {
   return directory;
 }
 
-async Task<Request> parse(Stream stream) {
+async Task<Request?> Parse(Stream stream) {
   // HACK use WINDOWS encoding for single-byte round-trip
   StreamReader reader = new(stream, Encoding.Latin1); // DON'T DISPOSE
   string? requestLine = await reader.ReadLineAsync();
-  if (requestLine!.Split(' ') is not [string method, string path, string protocol]) {
+  if (requestLine == null) {
+    return null;
+  }
+  if (requestLine.Split(' ') is not [string method, string path, string protocol]) {
     throw new FormatException("Invalid request line format");
   }
 
@@ -57,7 +60,7 @@ async Task<Request> parse(Stream stream) {
   return new Request(method, path, protocol, headers, body);
 }
 
-async Task Handle(Stream stream, Response response) {
+async Task Write(Stream stream, Response response) {
   StreamWriter writer = new(stream) {
     NewLine = "\r\n",
   };
@@ -164,11 +167,28 @@ var routes = new Dictionary<string, List<(string, Func<Request, Task<Response>>)
 async Task HandleClient(Socket client) {
   using Socket socket = client;
   using NetworkStream stream = new(socket);
-  Request request = await parse(stream);
-  Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
 
+  while (true) {
+    Request? request = await Parse(stream);
+    if (request == null) {
+      Console.WriteLine("Client disconnected");
+      break;
+    }
+    Console.WriteLine("Received: " + request.ToString().Replace(", ", ",\n  "));
+
+    await Handle(stream, request);
+
+    if (request.Headers.TryGetValue("Connection", out string? connection) && connection == "close") {
+      Console.WriteLine("Client requested to close the connection");
+      break;
+    }
+  }
+}
+
+
+async Task Handle(Stream stream, Request request) {
   if (!routes.TryGetValue(request.Method, out var methodRoutes)) {
-    await Handle(stream, notFound);
+    await Write(stream, notFound);
     return;
   }
 
@@ -181,10 +201,10 @@ async Task HandleClient(Socket client) {
     Response response = await func(request);
     response = AddCompression(request, response);
     Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
-    await Handle(stream, response);
+    await Write(stream, response);
     return;
   }
-  await Handle(stream, notFound);
+  await Write(stream, notFound);
 }
 
 using TcpListener server = new(IPAddress.Any, 4221);
@@ -199,11 +219,21 @@ while (true) {
       Console.Error.WriteLine("Error: " + t.Exception);
       return;
     }
-    Console.WriteLine("Client disconnected\n");
   });
 }
 
-record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, byte[] Body);
+record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, byte[] Body) {
+  public override string ToString() {
+    StringBuilder sb = new();
+    sb.AppendLine($"{Method} {Path} {Protocol}");
+    foreach (var header in Headers) {
+      sb.AppendLine($">{header.Key}: {header.Value}");
+    }
+    sb.AppendLine($"Body: {Encoding.UTF8.GetString(Body)}");
+    sb.AppendLine($"Body: {string.Join(" ", Body)}");
+    return sb.ToString();
+  }
+}
 record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body) {
   public override string ToString() {
     StringBuilder sb = new();
@@ -211,6 +241,7 @@ record Response(string Protocol, int StatusCode, string StatusMessage, Dictionar
     foreach (var header in Headers) {
       sb.AppendLine($">{header.Key}: {header.Value}");
     }
+    sb.AppendLine($"Body: {Encoding.UTF8.GetString(Body)}");
     sb.AppendLine($"Body: {string.Join(" ", Body)}");
     return sb.ToString();
   }
