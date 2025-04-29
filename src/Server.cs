@@ -25,7 +25,8 @@ string GetDirectory() {
 }
 
 async Task<Request> parse(Stream stream) {
-  StreamReader reader = new(stream); // DON'T DISPOSE
+  // HACK use WINDOWS encoding for single-byte round-trip
+  StreamReader reader = new(stream, Encoding.Latin1); // DON'T DISPOSE
   string? requestLine = await reader.ReadLineAsync();
   if (requestLine!.Split(' ') is not [string method, string path, string protocol]) {
     throw new FormatException("Invalid request line format");
@@ -41,11 +42,20 @@ async Task<Request> parse(Stream stream) {
     }
   }
 
-  if (method != "GET") {
-    throw new NotImplementedException("Only GET method is implemented");
+  var body = Array.Empty<byte>();
+  if (headers.TryGetValue("Content-Length", out string? contentLengthStr)) {
+    int contentLength = 0;
+    if (!int.TryParse(contentLengthStr, out contentLength)) {
+      throw new FormatException("Invalid Content-Length header");
+    }
+
+    // HACK would prefer to avoid parsing text and converting to char[] but using StreamReader it has already buffered the incoming lines
+    char[] chars = new char[contentLength];
+    var s = reader.ReadAsync(chars, 0, contentLength);
+    Console.WriteLine($"READ: {string.Join("", chars)}");
+    body = Encoding.Latin1.GetBytes(chars);
   }
-  // TODO(POST) understand how to not hang here string body = reader.ReadToEndAsync();
-  return new Request(method, path, protocol, headers, new byte[0]);
+  return new Request(method, path, protocol, headers, body);
 }
 
 async Task Handle(Stream stream, Response response) {
