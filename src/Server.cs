@@ -124,7 +124,8 @@ async Task<Response> WriteFile(string filename, byte[] body) {
 
 void AddCompression(Request request, Response response) {
   if (request.Headers.TryGetValue("Accept-Encoding", out string? acceptEncoding)) {
-    if (acceptEncoding == "gzip") {
+    var parsed = acceptEncoding.Split(',').Select(x => x.Trim()).ToList();
+    if (parsed.Contains("gzip")) {
       response.Headers["Content-Encoding"] = "gzip";
       //TODO response.Body = Gzip(response.Body);
     }
