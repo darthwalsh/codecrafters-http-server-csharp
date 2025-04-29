@@ -151,6 +151,18 @@ Response AddCompression(Request request, Response response) {
   return response;
 }
 
+Response AddConnectionClose(Request request, Response response) {
+  if (request.CloseConnection) {
+    var headers = new Dictionary<string, string>(response.Headers) {
+      ["Connection"] = "close",
+    };
+    return response with {
+      Headers = headers,
+    };
+  }
+  return response;
+}
+
 var routes = new Dictionary<string, List<(string, Func<Request, Task<Response>>)>> {
   ["GET"] = [
       ("/", (request) => Ok("Hello, World!")),
@@ -178,7 +190,7 @@ async Task HandleClient(Socket client) {
 
     await Handle(stream, request);
 
-    if (request.Headers.TryGetValue("Connection", out string? connection) && connection == "close") {
+    if (request.CloseConnection) {
       Console.WriteLine("Client requested to close the connection");
       break;
     }
@@ -200,6 +212,7 @@ async Task Handle(Stream stream, Request request) {
 
     Response response = await func(request);
     response = AddCompression(request, response);
+    response = AddConnectionClose(request, response);
     Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
     await Write(stream, response);
     return;
@@ -233,6 +246,9 @@ record Request(string Method, string Path, string Protocol, Dictionary<string, s
     sb.AppendLine($"Body: {string.Join(" ", Body)}");
     return sb.ToString();
   }
+
+  public bool CloseConnection => 
+    Headers.TryGetValue("Connection", out string? connection) && connection == "close";
 }
 record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body) {
   public override string ToString() {
