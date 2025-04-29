@@ -5,11 +5,24 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-if (args.Length != 2 || args[0] != "--directory") {
-  Console.WriteLine("Usage: <app> --directory <directory>");
+string? directory;
+if (args.Length == 0) {
+  directory = null;
+}
+else if (args.Length == 2 && args[0] == "--directory") {
+  directory = args[1];
+}
+else {
+  Console.WriteLine("Usage: dotnet run -- --directory <directory>");
   return 1;
 }
-string directory = args[1];
+
+string GetDirectory() {
+  if (directory == null) {
+    throw new ArgumentException("Directory not specified");
+  }
+  return directory;
+}
 
 async Task<Request> parse(Stream stream) {
   StreamReader reader = new(stream); // DON'T DISPOSE
@@ -78,7 +91,7 @@ bool IsValidFilename(string filename) {
 async Task<Response> GetFile(string filename) {
   if (!IsValidFilename(filename)) return notFound;
 
-  string path = Path.Combine(directory, filename);
+  string path = Path.Combine(GetDirectory(), filename);
   if (!File.Exists(path)) {
     return notFound;
   }
@@ -88,7 +101,7 @@ async Task<Response> GetFile(string filename) {
 async Task<Response> WriteFile(string filename, byte[] body) {
   if (!IsValidFilename(filename)) return notFound;
 
-  string path = Path.Combine(directory, filename);
+  string path = Path.Combine(GetDirectory(), filename);
   await File.WriteAllBytesAsync(path, body);
   return new Response(
     "HTTP/1.1",
