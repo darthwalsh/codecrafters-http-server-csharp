@@ -122,6 +122,15 @@ async Task<Response> WriteFile(string filename, byte[] body) {
   );
 }
 
+void AddCompression(Request request, Response response) {
+  if (request.Headers.TryGetValue("Accept-Encoding", out string? acceptEncoding)) {
+    if (acceptEncoding == "gzip") {
+      response.Headers["Content-Encoding"] = "gzip";
+      //TODO response.Body = Gzip(response.Body);
+    }
+  }
+}
+
 var routes = new Dictionary<string, List<(string, Func<Request, Task<Response>>)>> {
   ["GET"] = [
       ("/", (request) => Ok("Hello, World!")),
@@ -153,6 +162,7 @@ async Task HandleClient(Socket client) {
     }
 
     Response response = await func(request);
+    AddCompression(request, response);
     Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
     await Handle(stream, response);
     return;
