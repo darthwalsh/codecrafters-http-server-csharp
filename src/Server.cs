@@ -1,9 +1,8 @@
-using System.IO.Pipelines;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 
 string? directory;
 if (args.Length == 0) {
@@ -122,14 +121,31 @@ async Task<Response> WriteFile(string filename, byte[] body) {
   );
 }
 
-void AddCompression(Request request, Response response) {
+byte[] Gzip(byte[] data) {
+  using MemoryStream compressedStream = new();
+  using (GZipStream gzipStream = new(compressedStream, CompressionMode.Compress)) {
+    gzipStream.Write(data, 0, data.Length);
+  }
+  return compressedStream.ToArray();
+}
+
+Response AddCompression(Request request, Response response) {
   if (request.Headers.TryGetValue("Accept-Encoding", out string? acceptEncoding)) {
     var parsed = acceptEncoding.Split(',').Select(x => x.Trim()).ToList();
     if (parsed.Contains("gzip")) {
-      response.Headers["Content-Encoding"] = "gzip";
-      //TODO response.Body = Gzip(response.Body);
+      // MAYBE would be cool to use composition -- layer in the gzip stream in the Response
+      var compressedBody = Gzip(response.Body);
+      var headers = new Dictionary<string, string>(response.Headers) {
+        ["Content-Encoding"] = "gzip",
+        ["Content-Length"] = compressedBody.Length.ToString(),
+      };
+      return response with {
+        Headers = headers,
+        Body = compressedBody,
+      };
     }
   }
+  return response;
 }
 
 var routes = new Dictionary<string, List<(string, Func<Request, Task<Response>>)>> {
@@ -163,7 +179,7 @@ async Task HandleClient(Socket client) {
     }
 
     Response response = await func(request);
-    AddCompression(request, response);
+    response = AddCompression(request, response);
     Console.WriteLine("Sending response:\n" + response.ToString().Replace(", ", ",\n  "));
     await Handle(stream, response);
     return;
@@ -188,4 +204,14 @@ while (true) {
 }
 
 record Request(string Method, string Path, string Protocol, Dictionary<string, string> Headers, byte[] Body);
-record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body);
+record Response(string Protocol, int StatusCode, string StatusMessage, Dictionary<string, string> Headers, byte[] Body) {
+  public override string ToString() {
+    StringBuilder sb = new();
+    sb.AppendLine($"{Protocol} {StatusCode} {StatusMessage}");
+    foreach (var header in Headers) {
+      sb.AppendLine($">{header.Key}: {header.Value}");
+    }
+    sb.AppendLine($"Body: {string.Join(" ", Body)}");
+    return sb.ToString();
+  }
+}
